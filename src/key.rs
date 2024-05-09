@@ -86,10 +86,12 @@ fn wait_for_unlock(uuid: &uuid::Uuid) -> anyhow::Result<()> {
     }
 }
 
+// blocks indefinitely if no input is available on stdin
 fn ask_for_passphrase(sb: &bch_sb_handle) -> anyhow::Result<()> {
     let passphrase = if stdin().is_terminal() {
         rpassword::prompt_password("Enter passphrase: ")?
     } else {
+        info!("Trying to read passphrase from stdin...");
         let mut line = String::new();
         stdin().read_line(&mut line)?;
         line
@@ -104,9 +106,6 @@ fn unlock_master_key(sb: &bch_sb_handle, passphrase: &String) -> anyhow::Result<
     use std::os::raw::c_char;
 
     let key_name = std::ffi::CString::new(format!("bcachefs:{}", sb.sb().uuid())).unwrap();
-    if check_for_key(&key_name)? {
-        return Ok(());
-    }
 
     let bch_key_magic = BCH_KEY_MAGIC.as_bytes().read_u64::<LittleEndian>().unwrap();
     let crypt = sb.sb().crypt().unwrap();
@@ -161,7 +160,14 @@ pub fn read_from_passphrase_file(block_device: &bch_sb_handle, passphrase_file: 
 }
 
 pub fn apply_key_unlocking_policy(block_device: &bch_sb_handle, unlock_policy: UnlockPolicy) -> anyhow::Result<()> {
-    info!("Attempting to unlock master key for filesystem {}, using unlock policy {}", block_device.sb().uuid(), unlock_policy);
+    let uuid = block_device.sb().uuid();
+
+    let key_name = std::ffi::CString::new(format!("bcachefs:{}", uuid)).unwrap();
+    if check_for_key(&key_name)? {
+        return Ok(());
+    }
+
+    info!("Attempting to unlock master key for filesystem {}, using unlock policy {}", uuid, unlock_policy);
     match unlock_policy {
         UnlockPolicy::Fail => Err(anyhow!("no passphrase available")),
         UnlockPolicy::Wait => Ok(wait_for_unlock(&block_device.sb().uuid())?),
