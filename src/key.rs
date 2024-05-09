@@ -86,19 +86,8 @@ fn wait_for_unlock(uuid: &uuid::Uuid) -> anyhow::Result<()> {
     }
 }
 
-fn ask_for_passphrase(sb: &bch_sb_handle) -> anyhow::Result<()> {
-    let passphrase = if stdin().is_terminal() {
-        rpassword::prompt_password("Enter passphrase: ")?
-    } else {
-        let mut line = String::new();
-        stdin().read_line(&mut line)?;
-        line
-    };
-    unlock_master_key(sb, &passphrase)
-}
-
 const BCH_KEY_MAGIC: &str = "bch**key";
-fn unlock_master_key(sb: &bch_sb_handle, passphrase: &String) -> anyhow::Result<()> {
+fn unlock_master_key(sb: &bch_sb_handle) -> anyhow::Result<()> {
     use bch_bindgen::bcachefs::{self, bch2_chacha_encrypt_key, bch_encrypted_key, bch_key};
     use byteorder::{LittleEndian, ReadBytesExt};
     use std::os::raw::c_char;
@@ -110,6 +99,13 @@ fn unlock_master_key(sb: &bch_sb_handle, passphrase: &String) -> anyhow::Result<
 
     let bch_key_magic = BCH_KEY_MAGIC.as_bytes().read_u64::<LittleEndian>().unwrap();
     let crypt = sb.sb().crypt().unwrap();
+    let passphrase = if stdin().is_terminal() {
+        rpassword::prompt_password("Enter passphrase: ")?
+    } else {
+        let mut line = String::new();
+        stdin().read_line(&mut line)?;
+        line
+    };
     let passphrase = std::ffi::CString::new(passphrase.trim_end())?; // bind to keep the CString alive
     let mut output: bch_key = unsafe {
         bcachefs::derive_passphrase(
@@ -157,7 +153,7 @@ pub fn read_from_passphrase_file(block_device: &bch_sb_handle, passphrase_file: 
     // Read the contents of the password_file into a string
     let passphrase = fs::read_to_string(passphrase_file)?;
     // Call decrypt_master_key with the read string
-    unlock_master_key(block_device, &passphrase)
+    unlock_master_key(block_device)
 }
 
 pub fn apply_key_unlocking_policy(block_device: &bch_sb_handle, unlock_policy: UnlockPolicy) -> anyhow::Result<()> {
@@ -165,7 +161,7 @@ pub fn apply_key_unlocking_policy(block_device: &bch_sb_handle, unlock_policy: U
     match unlock_policy {
         UnlockPolicy::Fail => Err(anyhow!("no passphrase available")),
         UnlockPolicy::Wait => Ok(wait_for_unlock(&block_device.sb().uuid())?),
-        UnlockPolicy::Ask => ask_for_passphrase(block_device),
+        UnlockPolicy::Ask => unlock_master_key(block_device),
         _ => Err(anyhow!("no unlock policy specified for locked filesystem")),
     }
 }
